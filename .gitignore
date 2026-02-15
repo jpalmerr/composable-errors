@@ -1,0 +1,17 @@
+# Scala/SBT
+target/
+*.class
+*.log
+
+# IDE
+.idea/
+.bsp/
+.metals/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+
+# Spike investigation (local only)
+.claude/
