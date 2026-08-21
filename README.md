@@ -43,9 +43,19 @@ val result: Result[ValidationError | DatabaseError, User] = for {
 
 ## Installation
 
+This library is not published to Maven Central. To use it:
+
+```bash
+# Clone and publish locally
+git clone https://github.com/jpalmerr/composable-errors.git
+cd composable-errors
+sbt publishLocal
+```
+
+Then add to your `build.sbt`:
+
 ```scala
-// build.sbt
-libraryDependencies += "dev.composable" %% "composable-errors" % "0.1.0"
+libraryDependencies += "dev.composable" %% "composable-errors" % "0.1.0-SNAPSHOT"
 ```
 
 Requires Scala 3.3+

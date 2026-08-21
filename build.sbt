@@ -3,12 +3,12 @@ ThisBuild / organization := "dev.composable"
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 
 ThisBuild / homepage := Some(url("https://github.com/jpalmerr/composable-errors"))
-ThisBuild / licenses := List("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0"))
+ThisBuild / licenses := List("MIT" -> url("https://opensource.org/licenses/MIT"))
 ThisBuild / developers := List(
   Developer(
     id    = "jpalmerr",
     name  = "James Palmer",
-    email = "your.email@example.com",
+    email = "jamesdcpalmer1@gmail.com",
     url   = url("https://github.com/jpalmerr")
   )
 )
