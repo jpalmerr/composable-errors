@@ -179,11 +179,12 @@ val io: IO[User] = IO.fromEither(result.toEither.left.map {
 
 2. **IDE support is limited**: IntelliJ and Metals have limited support for union types. Error types may show as `Any` in some contexts.
 
-3. **Library evolution**: Adding a new error type to a function doesn't force consumers to update their handlers (unlike sealed traits).
+3. **Precision depends on API shape**: Operations such as `flatMap`, `zip`, and `map2` explicitly preserve unions. `sequence` and `traverse` can infer a common supertype unless their input union is already explicit.
 
 ## Write-ups
 
-- [What I Learned Building Error Handling with Scala 3 Union Types](https://gist.github.com/f8685eae583a6ee7a59ef78643ce2a83)
+- [Workflow-local errors: when a union is the business contract](docs/guides/workflow-local-errors.md)
+- [What I Learned Building Error Handling with Scala 3 Union Types](https://gist.github.com/jpalmerr/f8685eae583a6ee7a59ef78643ce2a83)
 
 ## License
 
