@@ -59,6 +59,10 @@ class ResultSpec extends AnyFlatSpec with Matchers:
 
     some.isOk shouldBe true
     none.isFail shouldBe true
+
+    var fallbackEvaluated = false
+    Result.fromOption(Some(42), { fallbackEvaluated = true; "missing" }).isOk shouldBe true
+    fallbackEvaluated shouldBe false
   }
 
   // ==========================================
@@ -85,12 +89,15 @@ class ResultSpec extends AnyFlatSpec with Matchers:
 
   it should "short-circuit on failure" in {
     val failed: Result[ValidationError, Int] = Result.fail(ValidationError("x", "y"))
+    var continuationEvaluated = false
     val result = for {
       a <- failed
-      b <- Result.ok(20)
+      b <- { continuationEvaluated = true; Result.ok(20) }
     } yield a + b
 
     result.isFail shouldBe true
+    continuationEvaluated shouldBe false
+    result.toEither shouldBe Left(ValidationError("x", "y"))
   }
 
   "mapError" should "transform error value" in {
@@ -105,6 +112,10 @@ class ResultSpec extends AnyFlatSpec with Matchers:
 
   "getOrElse" should "return value on success" in {
     Result.ok(42).getOrElse(0) shouldBe 42
+
+    var defaultEvaluated = false
+    Result.ok(42).getOrElse({ defaultEvaluated = true; 0 }) shouldBe 42
+    defaultEvaluated shouldBe false
   }
 
   it should "return default on failure" in {
@@ -113,6 +124,10 @@ class ResultSpec extends AnyFlatSpec with Matchers:
 
   "orElse" should "return original on success" in {
     Result.ok(42).orElse(Result.ok(0)).getOrElse(-1) shouldBe 42
+
+    var alternativeEvaluated = false
+    Result.ok(42).orElse({ alternativeEvaluated = true; Result.ok(0) }).getOrElse(-1) shouldBe 42
+    alternativeEvaluated shouldBe false
   }
 
   it should "return alternative on failure" in {
@@ -127,6 +142,85 @@ class ResultSpec extends AnyFlatSpec with Matchers:
   it should "pass through non-matching errors" in {
     val result = Result.fail("other").recover { case "error" => 42 }
     result.isFail shouldBe true
+    result.toEither shouldBe Left("other")
+  }
+
+  it should "evaluate a guarded partial function exactly once when it matches" in {
+    var guardEvaluations = 0
+    val pf: PartialFunction[String, Int] = {
+      case s if { guardEvaluations += 1; s == "boom" } => 42
+    }
+
+    Result.fail("boom").recover(pf).getOrElse(0) shouldBe 42
+    guardEvaluations shouldBe 1
+  }
+
+  it should "evaluate a guarded partial function exactly once when it does not match" in {
+    var guardEvaluations = 0
+    val pf: PartialFunction[String, Int] = {
+      case s if { guardEvaluations += 1; s == "boom" } => 42
+    }
+
+    Result.fail("other").recover(pf).toEither shouldBe Left("other")
+    guardEvaluations shouldBe 1
+  }
+
+  it should "not evaluate the partial function on success" in {
+    var guardEvaluations = 0
+    val pf: PartialFunction[String, Int] = {
+      case _ if { guardEvaluations += 1; true } => 42
+    }
+    val success: Result[String, Int] = Result.ok(7)
+
+    success.recover(pf).getOrElse(0) shouldBe 7
+    guardEvaluations shouldBe 0
+  }
+
+  "recoverWith" should "recover from matching errors with a new Result" in {
+    val result = Result.fail("boom").recoverWith { case "boom" => Result.ok(42) }
+    result.toEither shouldBe Right(42)
+  }
+
+  it should "pass through non-matching errors" in {
+    val result = Result.fail("other").recoverWith { case "boom" => Result.ok(42) }
+    result.toEither shouldBe Left("other")
+  }
+
+  it should "surface the replacement error when the recovery itself fails" in {
+    val replacement = ValidationError("field", "still bad")
+    val result = Result.fail("boom").recoverWith { case "boom" => Result.fail(replacement) }
+    result.toEither shouldBe Left(replacement)
+  }
+
+  it should "evaluate a guarded partial function exactly once when it matches" in {
+    var guardEvaluations = 0
+    val pf: PartialFunction[String, Result[Nothing, Int]] = {
+      case s if { guardEvaluations += 1; s == "boom" } => Result.ok(42)
+    }
+
+    Result.fail("boom").recoverWith(pf).getOrElse(0) shouldBe 42
+    guardEvaluations shouldBe 1
+  }
+
+  it should "evaluate a guarded partial function exactly once when it does not match" in {
+    var guardEvaluations = 0
+    val pf: PartialFunction[String, Result[Nothing, Int]] = {
+      case s if { guardEvaluations += 1; s == "boom" } => Result.ok(42)
+    }
+
+    Result.fail("other").recoverWith(pf).toEither shouldBe Left("other")
+    guardEvaluations shouldBe 1
+  }
+
+  it should "not evaluate the partial function on success" in {
+    var guardEvaluations = 0
+    val pf: PartialFunction[String, Result[Nothing, Int]] = {
+      case _ if { guardEvaluations += 1; true } => Result.ok(0)
+    }
+    val success: Result[String, Int] = Result.ok(7)
+
+    success.recoverWith(pf).getOrElse(0) shouldBe 7
+    guardEvaluations shouldBe 0
   }
 
   "toEither" should "convert to Either" in {
@@ -243,11 +337,26 @@ class ResultSpec extends AnyFlatSpec with Matchers:
   it should "fail on first error" in {
     val results = List(Result.ok(1), Result.fail("error"), Result.ok(3))
     Result.sequence(results).isFail shouldBe true
+    Result.sequence(results).toEither shouldBe Left("error")
+
+    val twoFailures = List(Result.ok(1), Result.fail("first"), Result.fail("second"))
+    Result.sequence(twoFailures).toEither shouldBe Left("first")
   }
 
   "traverse" should "apply function and collect results" in {
     val result = Result.traverse(List(1, 2, 3))(n => Result.ok(n * 2))
     result.getOrElse(Nil) shouldBe List(2, 4, 6)
+  }
+
+  it should "not apply the function to elements after the first failure" in {
+    var applied = List.empty[Int]
+    val result = Result.traverse(List(1, 2, 3, 4)) { n =>
+      applied = applied :+ n
+      if n == 2 then Result.fail(ValidationError("n", n.toString)) else Result.ok(n * 2)
+    }
+
+    applied shouldBe List(1, 2)
+    result.toEither shouldBe Left(ValidationError("n", "2"))
   }
 
   "zip" should "combine two results" in {
@@ -258,12 +367,26 @@ class ResultSpec extends AnyFlatSpec with Matchers:
     result.getOrElse((0, "")) shouldBe (1, "hello")
   }
 
+  it should "return the left-hand error when both sides fail" in {
+    def op1: Result[ValidationError, Int] = Result.fail(ValidationError("a", "left"))
+    def op2: Result[DatabaseError, String] = Result.fail(DatabaseError("q", "right"))
+
+    Result.zip(op1, op2).toEither shouldBe Left(ValidationError("a", "left"))
+  }
+
   "map2" should "combine two results with a function" in {
     def op1: Result[ValidationError, Int] = Result.ok(2)
     def op2: Result[DatabaseError, Int] = Result.ok(3)
 
     val result: Result[ValidationError | DatabaseError, Int] = Result.map2(op1, op2)(_ * _)
     result.getOrElse(0) shouldBe 6
+  }
+
+  it should "return the left-hand error when both sides fail" in {
+    def op1: Result[ValidationError, Int] = Result.fail(ValidationError("a", "left"))
+    def op2: Result[DatabaseError, Int] = Result.fail(DatabaseError("q", "right"))
+
+    Result.map2(op1, op2)(_ * _).toEither shouldBe Left(ValidationError("a", "left"))
   }
 
   // ==========================================
@@ -292,4 +415,65 @@ class ResultSpec extends AnyFlatSpec with Matchers:
     var called = false
     Result.ok(42).tapError((_: String) => called = true)
     called shouldBe false
+  }
+
+  // ==========================================
+  // Compile-Time Type Safety Tests
+  // ==========================================
+
+  "type safety" should "accept correct union type annotation" in {
+    assertCompiles("""
+      import composable.errors.Result
+      case class ErrA(msg: String)
+      case class ErrB(msg: String)
+      def op1: Result[ErrA, Int] = Result.ok(1)
+      def op2: Result[ErrB, Int] = Result.ok(2)
+      val result: Result[ErrA | ErrB, Int] = for {
+        a <- op1
+        b <- op2
+      } yield a + b
+    """)
+  }
+
+  it should "reject assigning union result to wrong single error type" in {
+    assertDoesNotCompile("""
+      import composable.errors.Result
+      case class ErrA(msg: String)
+      case class ErrB(msg: String)
+      case class ErrC(msg: String)
+      def op1: Result[ErrA, Int] = Result.ok(1)
+      def op2: Result[ErrB, Int] = Result.ok(2)
+      val result: Result[ErrC, Int] = for {
+        a <- op1
+        b <- op2
+      } yield a + b
+    """)
+  }
+
+  it should "reject assigning union result to incomplete union" in {
+    assertDoesNotCompile("""
+      import composable.errors.Result
+      case class ErrA(msg: String)
+      case class ErrB(msg: String)
+      def op1: Result[ErrA, Int] = Result.ok(1)
+      def op2: Result[ErrB, Int] = Result.ok(2)
+      val result: Result[ErrA, Int] = for {
+        a <- op1
+        b <- op2
+      } yield a + b
+    """)
+  }
+
+  it should "accept supertype annotation for union members" in {
+    assertCompiles("""
+      import composable.errors.Result
+      case class ErrA(msg: String) extends Exception
+      case class ErrB(msg: String) extends Exception
+      def op1: Result[ErrA, Int] = Result.ok(1)
+      def op2: Result[ErrB, Int] = Result.ok(2)
+      val result: Result[Exception, Int] = for {
+        a <- op1
+        b <- op2
+      } yield a + b
+    """)
   }
