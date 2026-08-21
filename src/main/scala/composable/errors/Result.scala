@@ -1,6 +1,7 @@
 package composable.errors
 
 import scala.util.{Try, Success, Failure}
+import scala.util.control.NonFatal
 
 /**
  * A Result type that automatically widens error types using Scala 3 union types.
@@ -43,7 +44,7 @@ object Result:
   /** Catch exceptions from a thunk. */
   def attempt[A](thunk: => A): Result[Throwable, A] =
     try Right(thunk)
-    catch case e: Throwable => Left(e)
+    catch case NonFatal(e) => Left(e)
 
   /** Create a Result from an Option, using the provided error if None. */
   def fromOption[E, A](option: Option[A], ifNone: => E): Result[E, A] =
@@ -104,7 +105,11 @@ object Result:
      */
     def recover[A1 >: A](pf: PartialFunction[E, A1]): Result[E, A1] =
       self match
-        case Left(e) if pf.isDefinedAt(e) => Right(pf(e))
+        // lift dispatches through a single applyOrElse, so a guarded pf is tested once.
+        case Left(e) =>
+          pf.lift(e) match
+            case Some(a) => Right(a)
+            case None    => Left(e)
         case other => other
 
     /**
@@ -113,8 +118,10 @@ object Result:
      */
     def recoverWith[E2, A1 >: A](pf: PartialFunction[E, Result[E2, A1]]): Result[E | E2, A1] =
       self match
-        case Left(e) if pf.isDefinedAt(e) => pf(e)
-        case Left(e) => Left(e)
+        case Left(e) =>
+          pf.lift(e) match
+            case Some(recovered) => recovered
+            case None            => Left(e)
         case Right(a) => Right(a)
 
     /** Convert to Either. */
@@ -159,10 +166,12 @@ object Result:
 
   /**
    * Traverse a list with a function that may fail.
-   * Fails with the first error encountered.
+   * Fails with the first error encountered, and does not apply `f` to any element after it.
    */
   def traverse[E, A, B](as: List[A])(f: A => Result[E, B]): Result[E, List[B]] =
-    sequence(as.map(f))
+    as.foldLeft[Result[E, List[B]]](ok(List.empty[B])) { (acc, a) =>
+      acc.flatMap(bs => f(a).map(_ :: bs))
+    }.map(_.reverse)
 
   /**
    * Combine two Results into a tuple.
